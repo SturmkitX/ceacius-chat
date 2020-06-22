@@ -36,7 +36,7 @@ window.addEventListener('load', () => {
 });
 
 async function decryptMessage(req, key) {
-    const response = JSON.parse(atob(req.responseText));
+    const response = JSON.parse(req.responseText);
     const rawMsg = await subtle.decrypt({
         name: 'AES-GCM',
         iv: response.iv

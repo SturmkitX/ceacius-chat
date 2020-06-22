@@ -44,12 +44,41 @@ app.post('/api/request', (req, res) => {
     const userPass = keys.get('gica');
     const aesKey = generateAesKey(payload.salt, userPass);
     console.log('AES Key: ', aesKey);
-    const msg = decryptMessage(aesKey, payload.iv, payload.message);
+
+    // TEST: Reencode data, extract auth tag and compare
+    const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, payload.iv);
+    let encrypted = cipher.update(new TextEncoder().encode('testkey123'));
+    encrypted += cipher.final();
+    const authTag = cipher.getAuthTag();
+
+    console.log('Client encrypted:', payload.message);
+    console.log('Buffer length:', payload.message.length);
+    console.log('Buffer byteLength:', Buffer.byteLength(payload.message, 'utf8'));
+    console.log('Server encrypted:', Buffer.from(encrypted));
+    console.log('Server auth tag:', authTag);
+
+    let msg;
+    try {
+        msg = decryptMessage(aesKey, payload.iv, payload.message);
+    } catch (_) {
+        console.warn('Failed to verify signature!');
+        res.status(401).send('Mai incearca');
+        return;
+    }
+    
 
     // check passwords
     if (msg === userPass) {
         console.log('The passwords match!!!');
-        res.status(200).send('Felicitari');
+        const respIv = crypto.randomBytes(12);
+        const respCipher = crypto.createCipheriv('aes-256-gcm', aesKey, respIv);
+
+        let endText = respCipher.update('Felicitari!', 'utf8', 'utf8');
+        endText += respCipher.final('utf8');
+        res.status(200).send(JSON.stringify({
+            iv: respIv,
+            message: endText
+        }));
     } else {
         console.warn(`The passwords are different: ${msg} /\\ ${userPass}`);
         res.status(401).send('Mai incearca');
@@ -64,12 +93,16 @@ function generateAesKey(salt, userPass) {
 
 function decryptMessage(key, iv, msg) {
     console.log('Msg:', msg);
+    const sepIndex = msg.length - 16;
+    const ciphertext = msg.slice(0, sepIndex);
+    const hmac = msg.slice(sepIndex);
+
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-    let decrypted = decipher.update(msg);
-    decipher.setAuthTag(msg.slice(msg.length - 16));
+    let decrypted = decipher.update(ciphertext);
+    decipher.setAuthTag(hmac);
     decrypted += decipher.final();
 
-
+    return decrypted;
 }
 
 app.listen(PORT, '127.0.0.1', () => console.log('Started server'));
