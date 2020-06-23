@@ -1,47 +1,64 @@
-const express = require('express');
-const bodyParser = require('body-parser');
+const http = require('http');
+const websocket = require('websocket').server;
 const crypto = require('crypto');
 
-const app = express();
 const PORT = process.env.PORT || 21567;
+
+const server = http.createServer();
+server.listen(PORT);
+console.log('Started server');
+
+const ws = new websocket({
+    httpServer: server
+});
 
 const keys = new Map();
 
 // TEST VALUE, to be removed
 keys.set('gica', 'testkey123');
 
-app.use(bodyParser.json());
+ws.on('request', req => {
+    const connection = req.accept(null, req.origin);
 
-app.get('/api/hello', (req, res) => {
-    res.send('Hello world');
+    connection.on('message', data => {
+        console.log('Received message:', data);
+        const payload = JSON.parse(data.utf8Data);
+
+        console.log('Payload:', payload);
+        // convert arrays to typed arrays / buffers
+        payload.salt = Buffer.from(payload.salt);
+        payload.iv = Buffer.from(payload.iv);
+        payload.message = Buffer.from(payload.message);
+
+        // encryption: PBKDF2 + AES
+        if (payload.action === 'authenticate') {
+            authenticateUser(connection, payload);
+        }
+        else
+        // encryption: PBKDF2 + HKDF + AES
+        if (payload.action === 'sendmsg') {
+            // TODO
+        }
+    });
+
+    connection.on('close', (reason, desc) => {
+        console.log('Client disconnected:', reason, desc);
+    });
+
+    connection.on('error', err => {
+        console.warn('Error:', err);
+    });
+
+    // also has binds for 'ping' and 'pong'
 });
 
-app.post('/api/request', (req, res) => {
-    console.log(req.body);
-    if (!req.body) {
-        res.status(400).send('Invalid payload');
-        return;
-    }
-
-    // take the username, iv, salt and encoded message
-    // get the password for that user and generate the aes key
-    // the decrypt and check if the passwords match
-    const payload = req.body;
-
-    // convert arrays to typed arrays / buffers
-    payload.salt = Buffer.from(payload.salt);
-    payload.iv = Buffer.from(payload.iv);
-    payload.message = Buffer.from(payload.message);
-
+function authenticateUser(conn, payload) {
     // Print Hex for tests
     console.log(payload.salt.toString('hex'));
     console.log(payload.iv.toString('hex'));
     console.log(payload.message.toString('hex'));
 
-    console.log('Payload: ', payload);
-    console.log(typeof payload.salt);
-
-    const userPass = keys.get('gica');
+    const userPass = keys.get(payload.username);
     const aesKey = generateAesKey(payload.salt, userPass);
     console.log('AES Key: ', aesKey);
 
@@ -61,8 +78,8 @@ app.post('/api/request', (req, res) => {
     try {
         msg = decryptMessage(aesKey, payload.iv, payload.message);
     } catch (_) {
-        console.warn('Failed to verify signature!');
-        res.status(401).send('Mai incearca');
+        console.error('Failed to authenticate user', payload.username);
+        conn.sendUTF('Failed to authenticate');
         return;
     }
     
@@ -73,17 +90,17 @@ app.post('/api/request', (req, res) => {
         const respIv = crypto.randomBytes(12);
         const respCipher = crypto.createCipheriv('aes-256-gcm', aesKey, respIv);
 
-        let endText = respCipher.update('Felicitari!', 'utf8', 'utf8');
-        endText += respCipher.final('utf8');
-        res.status(200).send(JSON.stringify({
-            iv: respIv,
-            message: endText
+        let endText = respCipher.update(Buffer.from('Felicitari'));
+        endText = Buffer.concat([endText, respCipher.final(), respCipher.getAuthTag()]);
+        conn.sendUTF(JSON.stringify({
+            iv: [...respIv],
+            message: [...endText]
         }));
     } else {
         console.warn(`The passwords are different: ${msg} /\\ ${userPass}`);
-        res.status(401).send('Mai incearca');
+        conn.sendUTF('Something wrong happened');
     }
-});
+}
 
 function generateAesKey(salt, userPass) {
     const aesKey = crypto.pbkdf2Sync(userPass, salt, 50_000, 32, 'sha256');
@@ -104,5 +121,3 @@ function decryptMessage(key, iv, msg) {
 
     return decrypted;
 }
-
-app.listen(PORT, '127.0.0.1', () => console.log('Started server'));

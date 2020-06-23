@@ -2,13 +2,44 @@ const crypto = window.crypto;
 const subtle = crypto.subtle;
 
 const password = 'testkey123';
+const conn = new WebSocket(`wss://${window.location.hostname}/chat/`);
 
-window.addEventListener('load', () => {
+let currentKey = undefined;
+
+conn.addEventListener('open', () => {
+    console.log('Successfully opened WS connection!');
+    startEncryption();
+});
+
+conn.addEventListener('message', event => {
+    console.log('Received message:', event);
+    const payload = JSON.parse(event.data);
+
+    console.log(payload.iv.constructor.name);
+    console.log(payload.message.constructor.name)
+    subtle.decrypt({
+        name: 'AES-GCM',
+        iv: new Uint8Array(payload.iv),
+        tagLength: 128
+    }, currentKey, new Uint8Array(payload.message)).then(decoded => {
+        console.log('Decoded message:', new TextDecoder().decode(decoded));
+    }).catch(err => {
+        throw err;
+    });
+});
+
+conn.addEventListener('error', err => {
+    console.log('WS error:', err);
+});
+
+function startEncryption() {
     console.log('Generating salts');
     generateAes().then(keySalt => {
         // Send the encrypted message
         const key = keySalt.key;
         const salt = keySalt.salt;
+        currentKey = key;
+
         const iv = crypto.getRandomValues(new Uint8Array(12));
         subtle.encrypt({
             name: 'AES-GCM',
@@ -17,13 +48,10 @@ window.addEventListener('load', () => {
         }, key, new TextEncoder().encode(password))
         .then(msg => {
             // send message to the server
-            const req = new XMLHttpRequest();
-            req.open('POST', '/api/request', true);
-            req.setRequestHeader('Content-Type', 'application/json');
-
-            req.addEventListener('load', () => decryptMessage(req, key));
-            req.send(JSON.stringify({
+            // req.addEventListener('load', () => decryptMessage(req, key));
+            conn.send(JSON.stringify({
                 username: 'gica',
+                action: 'authenticate',
                 iv: Array.from(iv),
                 salt: Array.from(salt),
                 message: Array.from(new Uint8Array(msg))
@@ -33,7 +61,7 @@ window.addEventListener('load', () => {
         });
     });
     
-});
+}
 
 async function decryptMessage(req, key) {
     const response = JSON.parse(req.responseText);
