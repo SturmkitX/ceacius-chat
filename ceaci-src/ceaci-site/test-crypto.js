@@ -1,7 +1,13 @@
 const crypto = window.crypto;
 const subtle = crypto.subtle;
 
-const password = 'testkey123';
+window.addEventListener('load', () => {
+    document.getElementById('sendMsgBtn').addEventListener('click', 
+        () => sendMessage(document.getElementById('msgInput').value)
+    );
+});
+
+let password = 'testkey123';
 const conn = new WebSocket(`wss://${window.location.hostname}/chat/`);
 
 let currentKey = undefined;
@@ -15,15 +21,29 @@ conn.addEventListener('message', event => {
     console.log('Received message:', event);
     const payload = JSON.parse(event.data);
 
-    console.log(payload.iv.constructor.name);
-    console.log(payload.message.constructor.name)
+    if (payload.succeeded === false) {
+        console.error('Failed to decode data');
+        conn.close();
+        return;
+    }
+
     subtle.decrypt({
         name: 'AES-GCM',
-        iv: new Uint8Array(payload.iv),
-        tagLength: 128
+        iv: new Uint8Array(payload.iv)
     }, currentKey, new Uint8Array(payload.message)).then(decoded => {
-        console.log('Decoded message:', new TextDecoder().decode(decoded));
+        const status = JSON.parse(new TextDecoder().decode(decoded));
+        console.log('Decoded message:', status);
+
+        switch (status.action) {
+            case 'authenticate-response': {
+                authenticationResponseHandler(status);
+            }; break;
+            case 'new-msg': {
+                printIncomingMessage(status);
+            }
+        }
     }).catch(err => {
+        console.error(err);
         throw err;
     });
 });
@@ -32,8 +52,17 @@ conn.addEventListener('error', err => {
     console.log('WS error:', err);
 });
 
+function authenticationResponseHandler(status) {
+    // TODO (if anything)
+    console.log('Auth response:', payload.message);
+}
+
+function printIncomingMessage(status) {
+    // Format (status.message): {username: string, data: string, timestamp: number}
+    console.log('New message:', status);
+}
+
 function startEncryption() {
-    console.log('Generating salts');
     generateAes().then(keySalt => {
         // Send the encrypted message
         const key = keySalt.key;
@@ -63,21 +92,12 @@ function startEncryption() {
     
 }
 
-async function decryptMessage(req, key) {
-    const response = JSON.parse(req.responseText);
-    const rawMsg = await subtle.decrypt({
-        name: 'AES-GCM',
-        iv: response.iv
-    }, key, response.message);
-
-    console.log('Received message', new TextDecoder().decode(rawMsg));
-};
-
 async function generateAes() {
+    console.log('Generating salts');
     const salt1 = crypto.getRandomValues(new Uint8Array(32));
 
     console.log('Generated salts!');
-    console.log(salt1);
+    // console.log(salt1);
 
     // Import key
     const kdfkey = await subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
@@ -102,4 +122,24 @@ async function generateAes() {
         key: aesKey,
         salt: salt1
     };
+}
+
+function sendMessage(input) {
+    generateAes().then(keySalt => {
+        currentKey = keySalt.key;
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        subtle.encrypt({
+            name: 'AES-GCM',
+            iv: iv,
+            tagLength: 128
+        }, currentKey, new TextEncoder().encode(input)).then(payload => {
+            conn.send(JSON.stringify({
+                username: 'gica',
+                action: 'sendmsg',
+                iv: Array.from(iv),
+                salt: Array.from(keySalt.salt),
+                message: Array.from(new Uint8Array(payload))
+            }));
+        });
+    });
 }

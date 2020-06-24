@@ -13,12 +13,16 @@ const ws = new websocket({
 });
 
 const keys = new Map();
+const aesKeys = new Map();
+const messagesLog = new Array();
+const clients = new Array();
 
 // TEST VALUE, to be removed
 keys.set('gica', 'testkey123');
 
 ws.on('request', req => {
     const connection = req.accept(null, req.origin);
+    clients.push(connection);
 
     connection.on('message', data => {
         console.log('Received message:', data);
@@ -35,14 +39,38 @@ ws.on('request', req => {
             authenticateUser(connection, payload);
         }
         else
-        // encryption: PBKDF2 + HKDF + AES
+        // encryption: PBKDF2 + AES
         if (payload.action === 'sendmsg') {
-            // TODO
+            console.log('Received message to broadcast');
+            const aesKey = generateAesKey(payload.salt, keys.get(payload.username));
+            const decrypted = decryptMessage(aesKey, payload.iv, payload.message).toString('utf8');
+            const saveObj = {
+                username: payload.username,
+                message: decrypted,
+                timestamp: Date.now()
+            };
+
+            console.log('Decrypted message:', saveObj);
+
+            messagesLog.push(saveObj);
+            clients.forEach(c => {
+                const iv = crypto.randomBytes(12);
+                const msg = encryptMessage(aesKey, iv, Buffer.from(JSON.stringify(saveObj), 'utf8'));
+                const objToSend = {
+                    action: 'new-msg',
+                    succeeded: true,
+                    iv: [...iv],
+                    message: [...msg]
+                };
+                console.log('Obj to send:', objToSend);
+                c.sendUTF(JSON.stringify(objToSend));
+            });
         }
     });
 
     connection.on('close', (reason, desc) => {
         console.log('Client disconnected:', reason, desc);
+        clients.splice(clients.findIndex(c => c === connection));
     });
 
     connection.on('error', err => {
@@ -53,52 +81,52 @@ ws.on('request', req => {
 });
 
 function authenticateUser(conn, payload) {
-    // Print Hex for tests
-    console.log(payload.salt.toString('hex'));
-    console.log(payload.iv.toString('hex'));
-    console.log(payload.message.toString('hex'));
-
     const userPass = keys.get(payload.username);
     const aesKey = generateAesKey(payload.salt, userPass);
     console.log('AES Key: ', aesKey);
-
-    // TEST: Reencode data, extract auth tag and compare
-    const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, payload.iv);
-    let encrypted = cipher.update(new TextEncoder().encode('testkey123'));
-    encrypted += cipher.final();
-    const authTag = cipher.getAuthTag();
-
-    console.log('Client encrypted:', payload.message);
-    console.log('Buffer length:', payload.message.length);
-    console.log('Buffer byteLength:', Buffer.byteLength(payload.message, 'utf8'));
-    console.log('Server encrypted:', Buffer.from(encrypted));
-    console.log('Server auth tag:', authTag);
 
     let msg;
     try {
         msg = decryptMessage(aesKey, payload.iv, payload.message);
     } catch (_) {
         console.error('Failed to authenticate user', payload.username);
-        conn.sendUTF('Failed to authenticate');
+        conn.sendUTF(JSON.stringify({
+            action: 'authenticate-response',
+            succeeded: false
+        }));
         return;
     }
     
 
     // check passwords
-    if (msg === userPass) {
+    if (msg.toString('utf8') === userPass) {
         console.log('The passwords match!!!');
         const respIv = crypto.randomBytes(12);
         const respCipher = crypto.createCipheriv('aes-256-gcm', aesKey, respIv);
 
-        let endText = respCipher.update(Buffer.from('Felicitari'));
+        const refreshAesKey = crypto.randomBytes(32);
+        const refreshAuthKey = crypto.randomBytes(16);
+
+        let endText = respCipher.update(Buffer.from(JSON.stringify({
+            refreshAesKey: [...refreshAesKey],
+            refreshAuthKey: [...refreshAuthKey]
+        })));
+        // aesKeys.set(payload.username, refreshAesKey);
+        // keys.set(payload.username, refreshAuthKey);
+
         endText = Buffer.concat([endText, respCipher.final(), respCipher.getAuthTag()]);
         conn.sendUTF(JSON.stringify({
             iv: [...respIv],
-            message: [...endText]
+            message: [...endText],
+            action: 'authenticate-response',
+            succeeded: true
         }));
     } else {
         console.warn(`The passwords are different: ${msg} /\\ ${userPass}`);
-        conn.sendUTF('Something wrong happened');
+        conn.sendUTF(JSON.stringify({
+            action: 'authenticate-response',
+            succeeded: false
+        }));
     }
 }
 
@@ -117,7 +145,14 @@ function decryptMessage(key, iv, msg) {
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
     let decrypted = decipher.update(ciphertext);
     decipher.setAuthTag(hmac);
-    decrypted += decipher.final();
+    return Buffer.concat([decrypted, decipher.final()]);
+}
 
-    return decrypted;
+function encryptMessage(key, iv, msg) {
+    console.log('Raw msg:', msg);
+
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    let encrypted = cipher.update(msg);
+
+    return Buffer.concat([encrypted, cipher.final(), cipher.getAuthTag()]);
 }
