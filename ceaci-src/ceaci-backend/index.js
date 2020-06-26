@@ -13,20 +13,25 @@ const ws = new websocket({
 });
 
 const keys = new Map();
-const aesKeys = new Map();
+const userAesKeys = new Map();
 const messagesLog = new Array();
-const clients = new Array();
+const clients = new Map();
 
 // TEST VALUE, to be removed
 keys.set('gica', 'testkey123');
+keys.set('marica', 'testus123');
 
 ws.on('request', req => {
     const connection = req.accept(null, req.origin);
-    clients.push(connection);
 
     connection.on('message', data => {
         console.log('Received message:', data);
         const payload = JSON.parse(data.utf8Data);
+
+        // may need to change this logic
+        if (!clients.has(payload.username)) {
+            clients.set(payload.username, connection);
+        }
 
         console.log('Payload:', payload);
         // convert arrays to typed arrays / buffers
@@ -43,6 +48,7 @@ ws.on('request', req => {
         if (payload.action === 'sendmsg') {
             console.log('Received message to broadcast');
             const aesKey = generateAesKey(payload.salt, keys.get(payload.username));
+            userAesKeys.set(payload.username, aesKey);
             const decrypted = decryptMessage(aesKey, payload.iv, payload.message).toString('utf8');
             const saveObj = {
                 username: payload.username,
@@ -53,9 +59,10 @@ ws.on('request', req => {
             console.log('Decrypted message:', saveObj);
 
             messagesLog.push(saveObj);
-            clients.forEach(c => {
+            for (let c in clients) {
+                const userKey = clients.get(c);
                 const iv = crypto.randomBytes(12);
-                const msg = encryptMessage(aesKey, iv, Buffer.from(JSON.stringify(saveObj), 'utf8'));
+                const msg = encryptMessage(userKey, iv, Buffer.from(JSON.stringify(saveObj), 'utf8'));
                 const objToSend = {
                     action: 'new-msg',
                     succeeded: true,
@@ -64,7 +71,7 @@ ws.on('request', req => {
                 };
                 console.log('Obj to send:', objToSend);
                 c.sendUTF(JSON.stringify(objToSend));
-            });
+            };
         }
     });
 
@@ -83,6 +90,7 @@ ws.on('request', req => {
 function authenticateUser(conn, payload) {
     const userPass = keys.get(payload.username);
     const aesKey = generateAesKey(payload.salt, userPass);
+    userAesKeys.set(payload.username, aesKey);
     console.log('AES Key: ', aesKey);
 
     let msg;

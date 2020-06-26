@@ -1,20 +1,28 @@
 const crypto = window.crypto;
 const subtle = crypto.subtle;
 
+let sessionUser = '';
+let sessionPass = '';
+
 window.addEventListener('load', () => {
+    document.getElementById('checkLoginBtn').addEventListener('click', () => {
+        sessionUser = document.getElementById('userField').value;
+        sessionPass = document.getElementById('passField').value;
+
+        // WS should be checked to be open
+        startEncryption();
+    });
     document.getElementById('sendMsgBtn').addEventListener('click', 
         () => sendMessage(document.getElementById('msgInput').value)
     );
 });
 
-let password = 'testkey123';
 const conn = new WebSocket(`wss://${window.location.hostname}/chat/`);
 
 let currentKey = undefined;
 
 conn.addEventListener('open', () => {
     console.log('Successfully opened WS connection!');
-    startEncryption();
 });
 
 conn.addEventListener('message', event => {
@@ -74,12 +82,12 @@ function startEncryption() {
             name: 'AES-GCM',
             iv: iv,
             tagLength: 128
-        }, key, new TextEncoder().encode(password))
+        }, key, new TextEncoder().encode(sessionPass))
         .then(msg => {
             // send message to the server
             // req.addEventListener('load', () => decryptMessage(req, key));
             conn.send(JSON.stringify({
-                username: 'gica',
+                username: sessionUser,
                 action: 'authenticate',
                 iv: Array.from(iv),
                 salt: Array.from(salt),
@@ -100,7 +108,7 @@ async function generateAes() {
     // console.log(salt1);
 
     // Import key
-    const kdfkey = await subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+    const kdfkey = await subtle.importKey('raw', new TextEncoder().encode(sessionPass), 'PBKDF2', false, ['deriveKey']);
 
     console.log('Generated PBK key:');
     console.log(kdfkey);
@@ -134,7 +142,7 @@ function sendMessage(input) {
             tagLength: 128
         }, currentKey, new TextEncoder().encode(input)).then(payload => {
             conn.send(JSON.stringify({
-                username: 'gica',
+                username: sessionUser,
                 action: 'sendmsg',
                 iv: Array.from(iv),
                 salt: Array.from(keySalt.salt),
