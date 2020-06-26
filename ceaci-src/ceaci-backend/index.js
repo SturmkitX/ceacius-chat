@@ -59,8 +59,10 @@ ws.on('request', req => {
             console.log('Decrypted message:', saveObj);
 
             messagesLog.push(saveObj);
-            for (let c in clients) {
-                const userKey = clients.get(c);
+            console.log(`Number of clients to send: ${clients.size}`);
+            for (let c of Array.from(clients.keys())) {
+                console.log(`Sending to client ${c}`);
+                const userKey = userAesKeys.get(c);
                 const iv = crypto.randomBytes(12);
                 const msg = encryptMessage(userKey, iv, Buffer.from(JSON.stringify(saveObj), 'utf8'));
                 const objToSend = {
@@ -70,7 +72,8 @@ ws.on('request', req => {
                     message: [...msg]
                 };
                 console.log('Obj to send:', objToSend);
-                c.sendUTF(JSON.stringify(objToSend));
+                clients.get(c).sendUTF(JSON.stringify(objToSend));
+                console.log(`Sent to ${c}:`, objToSend);
             };
         }
     });
