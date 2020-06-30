@@ -1,8 +1,8 @@
 const crypto = window.crypto;
 const subtle = crypto.subtle;
 
-let sessionUser = '';
-let sessionPass = '';
+let sessionUser = undefined;
+let sessionPass = undefined;
 
 window.addEventListener('load', () => {
     document.getElementById('checkLoginBtn').addEventListener('click', () => {
@@ -115,6 +115,7 @@ function sendMessage(input) {
     generateAes().then(keySalt => {
         currentKey = keySalt.key;
         const iv = crypto.getRandomValues(new Uint8Array(12));
+
         subtle.encrypt({
             name: 'AES-GCM',
             iv: iv,

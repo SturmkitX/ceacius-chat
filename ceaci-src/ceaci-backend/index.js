@@ -43,7 +43,6 @@ ws.on('request', req => {
 
         // encryption: PBKDF2 + AES
         if (payload.action === 'sendmsg') {
-            console.log('Received message to broadcast');
             const aesKey = generateAesKey(payload.salt, keys.get(payload.username));
             userAesKeys.set(payload.username, aesKey);
             const decrypted = decryptMessage(aesKey, payload.iv, payload.message).toString('utf8');
