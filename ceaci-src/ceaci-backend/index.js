@@ -15,11 +15,13 @@ const ws = new websocket({
 const keys = new Map();
 const userAesKeys = new Map();
 const messagesLog = new Array();
-const clients = new Map();
+const clients = new Array();
 
 // TEST VALUE, to be removed
-keys.set('gica', 'testkey123');
-keys.set('marica', 'testus123');
+keys.set('gica', Buffer.from('testkey123', 'utf8'));
+keys.set('marica', Buffer.from('testus123', 'utf8'));
+keys.set('gogu', Buffer.from('buncareala123', 'utf8'));
+keys.set('bogu', Buffer.from('passs1234', 'utf8'));
 
 ws.on('request', req => {
     const connection = req.accept(null, req.origin);
@@ -29,8 +31,8 @@ ws.on('request', req => {
         const payload = JSON.parse(data.utf8Data);
 
         // may need to change this logic
-        if (!clients.has(payload.username)) {
-            clients.set(payload.username, connection);
+        if (!clients.find(c => c.username === payload.username)) {
+            clients.push({username: payload.username, connection: connection});
         }
 
         console.log('Payload:', payload);
@@ -39,11 +41,6 @@ ws.on('request', req => {
         payload.iv = Buffer.from(payload.iv);
         payload.message = Buffer.from(payload.message);
 
-        // encryption: PBKDF2 + AES
-        if (payload.action === 'authenticate') {
-            authenticateUser(connection, payload);
-        }
-        else
         // encryption: PBKDF2 + AES
         if (payload.action === 'sendmsg') {
             console.log('Received message to broadcast');
@@ -59,28 +56,31 @@ ws.on('request', req => {
             console.log('Decrypted message:', saveObj);
 
             messagesLog.push(saveObj);
-            console.log(`Number of clients to send: ${clients.size}`);
-            for (let c of Array.from(clients.keys())) {
-                console.log(`Sending to client ${c}`);
-                const userKey = userAesKeys.get(c);
+            console.log(`Number of clients to send: ${clients.length}`);
+            for (let c of clients) {
+                console.log(`Sending to client ${c.username}`);
+                const userKey = userAesKeys.get(c.username);
                 const iv = crypto.randomBytes(12);
                 const msg = encryptMessage(userKey, iv, Buffer.from(JSON.stringify(saveObj), 'utf8'));
+                const refreshAes = crypto.randomBytes(32);
                 const objToSend = {
                     action: 'new-msg',
                     succeeded: true,
                     iv: [...iv],
+                    refreshKey: [...refreshAes],
                     message: [...msg]
                 };
                 console.log('Obj to send:', objToSend);
-                clients.get(c).sendUTF(JSON.stringify(objToSend));
-                console.log(`Sent to ${c}:`, objToSend);
+                c.connection.sendUTF(JSON.stringify(objToSend));
+                keys.set(c.username, refreshAes);
+                console.log(`Sent to ${c.username}:`, objToSend);
             };
         }
     });
 
     connection.on('close', (reason, desc) => {
         console.log('Client disconnected:', reason, desc);
-        clients.splice(clients.findIndex(c => c === connection));
+        clients.splice(clients.findIndex(c => c === connection), 1);
     });
 
     connection.on('error', err => {
@@ -89,57 +89,6 @@ ws.on('request', req => {
 
     // also has binds for 'ping' and 'pong'
 });
-
-function authenticateUser(conn, payload) {
-    const userPass = keys.get(payload.username);
-    const aesKey = generateAesKey(payload.salt, userPass);
-    userAesKeys.set(payload.username, aesKey);
-    console.log('AES Key: ', aesKey);
-
-    let msg;
-    try {
-        msg = decryptMessage(aesKey, payload.iv, payload.message);
-    } catch (_) {
-        console.error('Failed to authenticate user', payload.username);
-        conn.sendUTF(JSON.stringify({
-            action: 'authenticate-response',
-            succeeded: false
-        }));
-        return;
-    }
-    
-
-    // check passwords
-    if (msg.toString('utf8') === userPass) {
-        console.log('The passwords match!!!');
-        const respIv = crypto.randomBytes(12);
-        const respCipher = crypto.createCipheriv('aes-256-gcm', aesKey, respIv);
-
-        const refreshAesKey = crypto.randomBytes(32);
-        const refreshAuthKey = crypto.randomBytes(16);
-
-        let endText = respCipher.update(Buffer.from(JSON.stringify({
-            refreshAesKey: [...refreshAesKey],
-            refreshAuthKey: [...refreshAuthKey]
-        })));
-        // aesKeys.set(payload.username, refreshAesKey);
-        // keys.set(payload.username, refreshAuthKey);
-
-        endText = Buffer.concat([endText, respCipher.final(), respCipher.getAuthTag()]);
-        conn.sendUTF(JSON.stringify({
-            iv: [...respIv],
-            message: [...endText],
-            action: 'authenticate-response',
-            succeeded: true
-        }));
-    } else {
-        console.warn(`The passwords are different: ${msg} /\\ ${userPass}`);
-        conn.sendUTF(JSON.stringify({
-            action: 'authenticate-response',
-            succeeded: false
-        }));
-    }
-}
 
 function generateAesKey(salt, userPass) {
     const aesKey = crypto.pbkdf2Sync(userPass, salt, 50_000, 32, 'sha256');

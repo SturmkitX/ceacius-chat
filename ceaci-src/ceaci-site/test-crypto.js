@@ -7,10 +7,9 @@ let sessionPass = '';
 window.addEventListener('load', () => {
     document.getElementById('checkLoginBtn').addEventListener('click', () => {
         sessionUser = document.getElementById('userField').value;
-        sessionPass = document.getElementById('passField').value;
+        sessionPass = new TextEncoder().encode(document.getElementById('passField').value);
 
-        // WS should be checked to be open
-        startEncryption();
+        console.log('Successfully set session variables!');
     });
     document.getElementById('sendMsgBtn').addEventListener('click', 
         () => sendMessage(document.getElementById('msgInput').value)
@@ -42,14 +41,13 @@ conn.addEventListener('message', event => {
         const status = JSON.parse(new TextDecoder().decode(decoded));
         console.log('Decoded message:', status);
 
-        switch (status.action) {
-            case 'authenticate-response': {
-                authenticationResponseHandler(status);
-            }; break;
+        switch (payload.action) {
             case 'new-msg': {
                 printIncomingMessage(status);
             }
         }
+
+        sessionPass = new Uint8Array(payload.refreshKey);
     }).catch(err => {
         console.error(err);
         throw err;
@@ -60,44 +58,25 @@ conn.addEventListener('error', err => {
     console.log('WS error:', err);
 });
 
-function authenticationResponseHandler(status) {
-    // TODO (if anything)
-    console.log('Auth response:', payload.message);
-}
-
 function printIncomingMessage(status) {
-    // Format (status.message): {username: string, data: string, timestamp: number}
+    // Format (status.message): {username: string, message: string, timestamp: number}
     console.log('New message:', status);
-}
+    const table = document.getElementById('msgLogTable');
+    const row = document.createElement('tr');
 
-function startEncryption() {
-    generateAes().then(keySalt => {
-        // Send the encrypted message
-        const key = keySalt.key;
-        const salt = keySalt.salt;
-        currentKey = key;
+    let rowData = document.createElement('td');
+    rowData.innerHTML = status.timestamp;
+    row.appendChild(rowData);
 
-        const iv = crypto.getRandomValues(new Uint8Array(12));
-        subtle.encrypt({
-            name: 'AES-GCM',
-            iv: iv,
-            tagLength: 128
-        }, key, new TextEncoder().encode(sessionPass))
-        .then(msg => {
-            // send message to the server
-            // req.addEventListener('load', () => decryptMessage(req, key));
-            conn.send(JSON.stringify({
-                username: sessionUser,
-                action: 'authenticate',
-                iv: Array.from(iv),
-                salt: Array.from(salt),
-                message: Array.from(new Uint8Array(msg))
-            }));
-        }).catch(err => {
-            throw err;
-        });
-    });
-    
+    rowData = document.createElement('td');
+    rowData.innerHTML = status.username;
+    row.appendChild(rowData);
+
+    rowData = document.createElement('td');
+    rowData.innerHTML = status.message;
+    row.appendChild(rowData);
+
+    table.appendChild(row);
 }
 
 async function generateAes() {
@@ -108,7 +87,7 @@ async function generateAes() {
     // console.log(salt1);
 
     // Import key
-    const kdfkey = await subtle.importKey('raw', new TextEncoder().encode(sessionPass), 'PBKDF2', false, ['deriveKey']);
+    const kdfkey = await subtle.importKey('raw', sessionPass, 'PBKDF2', false, ['deriveKey']);
 
     console.log('Generated PBK key:');
     console.log(kdfkey);
