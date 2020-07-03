@@ -1,15 +1,31 @@
 const crypto = window.crypto;
 const subtle = crypto.subtle;
 
+// should add a MASTER password for encrypting / decrypting these values in the user space
+// so they aren't plain text
+
 let sessionUser = undefined;
 let sessionPass = undefined;
+
+if (localStorage.getItem('username') && localStorage.getItem('password')) {
+    sessionUser = localStorage.getItem('username');
+    sessionPass = new Uint8Array(JSON.parse(atob(localStorage.getItem('password'))));
+    console.log('Already logged in.');
+} else {
+    console.log('No credentials saved locally.');
+}
 
 window.addEventListener('load', () => {
     document.getElementById('checkLoginBtn').addEventListener('click', () => {
         sessionUser = document.getElementById('userField').value;
         sessionPass = new TextEncoder().encode(document.getElementById('passField').value);
 
+        localStorage.setItem('username', sessionUser);
+        localStorage.setItem('password', btoa(JSON.stringify(Array.from(sessionPass))));
+
         console.log('Successfully set session variables!');
+
+        fetchMessages();
     });
     document.getElementById('sendMsgBtn').addEventListener('click', 
         () => sendMessage(document.getElementById('msgInput').value)
@@ -22,6 +38,9 @@ let currentKey = undefined;
 
 conn.addEventListener('open', () => {
     console.log('Successfully opened WS connection!');
+    if (localStorage.getItem('username') && localStorage.getItem('password')) {
+        fetchMessages();
+    }
 });
 
 conn.addEventListener('message', event => {
@@ -43,11 +62,16 @@ conn.addEventListener('message', event => {
 
         switch (payload.action) {
             case 'new-msg': {
-                printIncomingMessage(status);
+                printIncomingMessage([status]);
+            }; break;
+            case 'fetch-response': {
+                listAllPreviousMessages(status);
             }
         }
 
         sessionPass = new Uint8Array(payload.refreshKey);
+
+        localStorage.setItem('password', btoa(JSON.stringify(Array.from(sessionPass))));
     }).catch(err => {
         console.error(err);
         throw err;
@@ -58,25 +82,33 @@ conn.addEventListener('error', err => {
     console.log('WS error:', err);
 });
 
-function printIncomingMessage(status) {
+function printIncomingMessage(messages) {
     // Format (status.message): {username: string, message: string, timestamp: number}
-    console.log('New message:', status);
+    console.log('New messages:', messages);
     const table = document.getElementById('msgLogTable');
-    const row = document.createElement('tr');
 
-    let rowData = document.createElement('td');
-    rowData.innerHTML = status.timestamp;
-    row.appendChild(rowData);
+    for (let status of messages) {
+        const row = document.createElement('tr');
 
-    rowData = document.createElement('td');
-    rowData.innerHTML = status.username;
-    row.appendChild(rowData);
+        let rowData = document.createElement('td');
+        rowData.innerHTML = status.timestamp;
+        row.appendChild(rowData);
+    
+        rowData = document.createElement('td');
+        rowData.innerHTML = status.username;
+        row.appendChild(rowData);
+    
+        rowData = document.createElement('td');
+        rowData.innerHTML = status.message;
+        row.appendChild(rowData);
+    
+        table.appendChild(row);
+    }
+}
 
-    rowData = document.createElement('td');
-    rowData.innerHTML = status.message;
-    row.appendChild(rowData);
-
-    table.appendChild(row);
+function listAllPreviousMessages(status) {
+    console.log('Message log for today:', status);
+    printIncomingMessage(status);
 }
 
 async function generateAes() {
@@ -124,6 +156,27 @@ function sendMessage(input) {
             conn.send(JSON.stringify({
                 username: sessionUser,
                 action: 'sendmsg',
+                iv: Array.from(iv),
+                salt: Array.from(keySalt.salt),
+                message: Array.from(new Uint8Array(payload))
+            }));
+        });
+    });
+}
+
+function fetchMessages() {
+    generateAes().then(keySalt => {
+        currentKey = keySalt.key;
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+
+        subtle.encrypt({
+            name: 'AES-GCM',
+            iv: iv,
+            tagLength: 128
+        }, currentKey, new TextEncoder().encode('WASSUP')).then(payload => {
+            conn.send(JSON.stringify({
+                username: sessionUser,
+                action: 'fetch',
                 iv: Array.from(iv),
                 salt: Array.from(keySalt.salt),
                 message: Array.from(new Uint8Array(payload))

@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 21567;
 
 const server = http.createServer();
-server.listen(PORT);
+server.listen(PORT, '127.0.0.1');
 console.log('Started server');
 
 const ws = new websocket({
@@ -74,6 +74,35 @@ ws.on('request', req => {
                 keys.set(c.username, refreshAes);
                 console.log(`Sent to ${c.username}:`, objToSend);
             };
+        } else if (payload.action === 'fetch') {
+            const aesKey = generateAesKey(payload.salt, keys.get(payload.username));
+            userAesKeys.set(payload.username, aesKey);
+            const decrypted = decryptMessage(aesKey, payload.iv, payload.message).toString('utf8');
+
+            if (decrypted === 'WASSUP') {
+                console.log('Received correct message');
+            } else {
+                console.warn('Impostor detected!');
+                connection.close();
+                return;
+            }
+
+            console.log(`Sending to client ${payload.username}`);
+            const userKey = userAesKeys.get(payload.username);
+            const iv = crypto.randomBytes(12);
+            const msg = encryptMessage(userKey, iv, Buffer.from(JSON.stringify(messagesLog), 'utf8'));
+            const refreshAes = crypto.randomBytes(32);
+            const objToSend = {
+                action: 'fetch-response',
+                succeeded: true,
+                iv: [...iv],
+                refreshKey: [...refreshAes],
+                message: [...msg]
+            };
+            console.log('Obj to send:', objToSend);
+            connection.sendUTF(JSON.stringify(objToSend));
+            keys.set(payload.username, refreshAes);
+            console.log(`Sent to ${payload.username}:`, objToSend);
         }
     });
 
