@@ -2,17 +2,30 @@
 	<head>
 		<meta charset="utf-8"/>
 		<title>Ceaci main page</title>
+		<link rel="stylesheet" type="text/css" href="styles.css" />
 	</head>
 	<body>
-		<p>Check console</p>
-		<input type="text" id="userField" placeholder="Enter username..." /> <br />
-		<input type="password" id="passField" placeholder="Enter password"... /><br />
-		<input type="button" value="Login" id="checkLoginBtn" /><br /><br />
+		<div class="login-data">
+			<p>Check console</p>
+			<input type="text" id="userField" placeholder="Enter username..." /> <br />
+			<input type="password" id="passField" placeholder="Enter password"... /><br />
+			<input type="button" value="Login" id="checkLoginBtn" /><br /><br />
+		</div>
 
-		<input type="text" id="msgInput" placeholder="Enter your message here" />
-		<input type="submit" value="Send message" id="sendMsgBtn" /><br /><br />
+		<span>TBD</span>
 
-		<table>
+		<div class="message-area">
+
+		</div>
+
+		<div class="input-area">
+			<input type="text" id="msgInput" placeholder="Enter your message here" />
+			<input type="submit" value="Send message" id="sendMsgBtn" />
+		</div>
+
+		
+
+		<table style="display: none;">
 			<thead>
 				<tr>
 					<th>Timestamp</th>
