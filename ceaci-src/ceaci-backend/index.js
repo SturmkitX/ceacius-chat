@@ -146,7 +146,7 @@ ws.on('request', req => {
 
     connection.on('close', (reason, desc) => {
         console.log('Client disconnected:', reason, desc);
-        clients.splice(clients.findIndex(c => c === connection), 1);
+        clients.splice(clients.findIndex(c => c.connection === connection), 1);
     });
 
     connection.on('error', err => {
